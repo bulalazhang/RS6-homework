@@ -1,9 +1,12 @@
+```python
+#Import package
 import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 from sklearn.preprocessing import StandardScaler, PowerTransformer, OneHotEncoder
+from sklearn import model_selection
 from xgboost import XGBClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.tree import ExtraTreeClassifier
@@ -15,237 +18,333 @@ from sklearn.model_selection import cross_validate
 from sklearn.linear_model import LogisticRegression
 from sklearn.linear_model import RidgeClassifier
 from sklearn.linear_model import SGDClassifier
+from sklearn.ensemble import BaggingClassifier,VotingClassifier,AdaBoostClassifier,GradientBoostingClassifier
+
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import GridSearchCV
-import itertools
+from sklearn.model_selection import cross_val_score
+from itertools import combinations
 from scipy.stats.stats import pearsonr
 pd.options.display.max_columns = None
 pd.options.display.max_rows = None
+```
 
+
+```python
 #读取文件
 file1 = 'train.csv'
 file2 = 'test.csv'
 train = pd.read_csv(file1)
 test = pd.read_csv(file2)
+```
 
-train.head(5)
 
-# feature processing
+```python
+target = 'Attrition'
+y_train = train[target]
+y_train = np.where(y_train=='Yes',1,0)
+```
 
+
+```python
 #查看变量
 train.columns
+```
 
-#提取特征,'Attrition','Over18','user_id','EmployeeCount'排除
-target = 'Attrition'
-Y_train = train[target] 
-Y_train = np.where(Y_train=='Yes',1,0)
+
+
+
+    Index(['user_id', 'Age', 'Attrition', 'BusinessTravel', 'DailyRate',
+           'Department', 'DistanceFromHome', 'Education', 'EducationField',
+           'EmployeeCount', 'EmployeeNumber', 'EnvironmentSatisfaction', 'Gender',
+           'HourlyRate', 'JobInvolvement', 'JobLevel', 'JobRole',
+           'JobSatisfaction', 'MaritalStatus', 'MonthlyIncome', 'MonthlyRate',
+           'NumCompaniesWorked', 'Over18', 'OverTime', 'PercentSalaryHike',
+           'PerformanceRating', 'RelationshipSatisfaction', 'StandardHours',
+           'StockOptionLevel', 'TotalWorkingYears', 'TrainingTimesLastYear',
+           'WorkLifeBalance', 'YearsAtCompany', 'YearsInCurrentRole',
+           'YearsSinceLastPromotion', 'YearsWithCurrManager'],
+          dtype='object')
+
+
+
+
+```python
 features = [x for x in train.columns if x not in ['Attrition','Over18','user_id','EmployeeCount']]
+```
+
+
+```python
 train_ex = train[features]
 test_ex = test[features]
-feature_ex = pd.concat([train_ex,test_ex])
+```
 
-#变量分类
-continuous = ['DailyRate','HourlyRate','MonthlyIncome','MonthlyRate','PercentSalaryHike']
-discrete = ['Age','NumCompaniesWorked','StandardHours','TotalWorkingYears','TrainingTimesLastYear','YearsAtCompany','YearsInCurrentRole','YearsSinceLastPromotion','YearsWithCurrManager']
-nominal = ['BusinessTravel','Department','EducationField','Gender','JobRole','MaritalStatus','OverTime']
-ordinal = ['DistanceFromHome','Education','EmployeeNumber','EnvironmentSatisfaction','JobLevel','JobInvolvement','JobSatisfaction','PerformanceRating','RelationshipSatisfaction','StockOptionLevel','WorkLifeBalance']
-numerical = continuous + discrete
+### Feature Dealing
 
 
-#创造新的特征
-# 小数点特征，主要是百分比
-flowCols = ['PercentSalaryHike']
-# 连续数特征，都是薪水特征
-salaryCols = ['DailyRate','HourlyRate','MonthlyIncome','MonthlyRate']
-# 离散特征,主要是小时数和年限
-vsCols =  ['Age','NumCompaniesWorked','StandardHours','TotalWorkingYears','TrainingTimesLastYear','YearsAtCompany','YearsInCurrentRole','YearsSinceLastPromotion','YearsWithCurrManager']
-# 算出不同离散特征下面的薪水金额。 
-for i in salaryCols:
-    for j in vsCols:
-        feature_ex["{}/{}".format(i, j)] = feature_ex[i].values/(feature_ex[j].values+1)
-# 离散特征， 主要是抓占比。
-for i in vsCols:
-    for j in vsCols:
-        if i==j:
-            continue
-        feature_ex["{}×{}".format(i, j)] = feature_ex[i].values*(feature_ex[j].values+1)
-        feature_ex["{}/{}".format(i, j)] = feature_ex[i].values/(feature_ex[j].values+1)
-        feature_ex["{}-{}".format(i, j)] = feature_ex[i].values-(feature_ex[j].values+1)
+```python
+#String label to Value label only
+def extract_features(df):
     
-# 薪水特征。
-for i in salaryCols:
-    for j in salaryCols:
-        if i==j:
-            continue
-        feature_ex["{}/{}".format(i, j)] = feature_ex[i].values/(feature_ex[j].values+1)
-        feature_ex["{}*{}".format(i, j)] = feature_ex[i].values*(feature_ex[j].values+1)
-        feature_ex["{}-{}".format(i, j)] = feature_ex[i].values-(feature_ex[j].values+1)
-
-
-#用OneHotEncoder处理ordinal,
-dum_label = ['BusinessTravel','Department','EducationField','JobRole']
-ohe = OneHotEncoder(sparse=False)
-dum = feature_ex[dum_label]
-dum = ohe.fit_transform(dum)
-feature_ex = feature_ex.drop(columns=dum_label)
-feature_ex = feature_ex.join(pd.DataFrame(dum))
-
-#处理二元分类变量'Gender','MaritalStatus','OverTime'
-feature_ex['Gender'] = np.where(feature_ex['Gender']=='Male',1,0)
-feature_ex['MaritalStatus'] = np.where(feature_ex['MaritalStatus']=='Married',1,0)
-feature_ex['OverTime'] = np.where(feature_ex['OverTime']=='Yes',1,0)
-
-#数据集
-trainLen = train_ex.shape[0]
-X_train = feature_ex[:trainLen]
-X_test = feature_ex[trainLen:]
-
-sc = StandardScaler()
-X_train = sc.fit_transform(X_train)
-X_test = sc.transform(X_test)
-
-## MODEL SELECTION
-
-
-#set up model selection funtion
-def test_model(X,y):
-
-    
-    estimator_list = [
-        SGDClassifier(),
-        RidgeClassifier(),
-        LogisticRegression(),
-        XGBClassifier(),
-        DecisionTreeClassifier(),
-        ExtraTreeClassifier(),
-        SVC(),
-        KNeighborsClassifier(),
-        GradientBoostingClassifier()    
-    ]
-
-    cv_split = ShuffleSplit(n_splits=6, train_size=0.7, test_size=0.2, random_state=168)
-    df_columns = ['Name', 'Parameters', 'Train Accuracy Mean', 'Test Accuracy Mean', 'Test Accuracy Std', 'Comsumed Time']
-    df = pd.DataFrame(columns=df_columns)
-
-    row_index = 0
-    for estimator in estimator_list:
-        df.loc[row_index, 'Name'] = estimator.__class__.__name__
-        df.loc[row_index, 'Parameters'] = str(estimator.get_params())
-        cv_results = cross_validate(estimator, X,y, cv=cv_split,return_train_score=True)
-        #print(cv_results)
-        df.loc[row_index, 'Train Accuracy Mean'] = cv_results['train_score'].mean()
-        df.loc[row_index, 'Test Accuracy Mean'] = cv_results['test_score'].mean()
-        df.loc[row_index, 'Test Accuracy Std'] = cv_results['test_score'].std()
-        df.loc[row_index, 'Comsumed Time'] = cv_results['fit_time'].mean()
-        print(row_index, estimator.__class__.__name__)
-        print(cv_results['test_score'])
-        row_index += 1
-    df = df.sort_values(by='Test Accuracy Mean', ascending=False)
+    # BusinessTravel
+    businesstravel_dict = {'Non-Travel':0, 'Travel_Rarely':1, 'Travel_Frequently':2}
+    df['BusinessTravel'] = df['BusinessTravel'].map(lambda x: businesstravel_dict[x])
+    # Department
+    department_dict = {'Sales':0, 'Research & Development':1, 'Human Resources':2}
+    df['Department'] = df['Department'].map(lambda x: department_dict[x])
+    # EducationField
+    educationfield_dict = {'Life Sciences':0, 'Medical':1, 'Marketing':2, 'Technical Degree':3, 'Human Resources':4, 'Other':5}
+    df['EducationField'] = df['EducationField'].map(lambda x: educationfield_dict[x])
+    # Gender
+    gender_dict = {'Male':0, 'Female': 1}
+    df['Gender'] = df['Gender'].map(lambda x: gender_dict[x])
+    # JobRole
+    jobrole_dict = {'Sales Executive':0, 
+                    'Research Scientist':1, 
+                    'Laboratory Technician':2, 
+                    'Manufacturing Director':3, 
+                    'Healthcare Representative':4,
+                    'Manager':5, 
+                    'Sales Representative':6,
+                    'Research Director':7,
+                    'Human Resources':8
+                   }
+    df['JobRole'] = df['JobRole'].map(lambda x: jobrole_dict[x])
+    # MaritalStatus
+    maritalstatus_dict = {'Single':0, 'Married':1, 'Divorced':2}
+    df['MaritalStatus'] = df['MaritalStatus'].map(lambda x: maritalstatus_dict[x])
+    # OverTime
+    overtime_dict = {'Yes':0, 'No':1}
+    df['OverTime'] = df['OverTime'].map(lambda x: overtime_dict[x])
     return df
-
-test_model(X_train,Y_train)
-
-
-#max_depth 和 min_weight参数调优
-xgb1 = XGBClassifier(
-    booster = 'gbtree',
-    learning_rate = 0.01,
-    n_estimators = 140,
-    max_depth = 5, 
-    min_child_weight =1,
-    gamma = 0,
-    subsample = 0.8,
-    colsample_bytree = 0.8,
-    objective = 'binary:logistic',
-    nthread = 4,
-    scale_pos_weight = 1,                                   
-    seed = 27
-)
-
-param_test1 = {
-    'max_depth':range(3,10,2),
-    'min_child_weight':range(1,6,2)
-}
-
-gsearch1 = GridSearchCV(
-    estimator = xgb1,
-    param_grid = param_test1,
-    scoring = 'roc_auc',
-    n_jobs = 4,
-    iid = False,
-    cv=5,
-    return_train_score=True
-)
-
-gsearch1.fit(X_train,Y_train)
-results = gsearch1.cv_results_
-best_estimator = gsearch1.best_estimator_
+```
 
 
-#gamma参数调优
-param_test2 = {
-    'gamma':[i/10.0 for i in range(0,8)]
-}
+```python
+X_train = extract_features(train_ex)
+X_test = extract_features(test_ex)
+```
 
-gsearch2 = GridSearchCV(
-    estimator = best_estimator,
-    param_grid = param_test2,
-    scoring = 'roc_auc',
-    n_jobs = 4,
-    iid = False,
-    cv=5,
-    return_train_score=True
-)
+    /opt/anaconda3/lib/python3.7/site-packages/ipykernel_launcher.py:6: SettingWithCopyWarning: 
+    A value is trying to be set on a copy of a slice from a DataFrame.
+    Try using .loc[row_indexer,col_indexer] = value instead
+    
+    See the caveats in the documentation: http://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+      
+    /opt/anaconda3/lib/python3.7/site-packages/ipykernel_launcher.py:9: SettingWithCopyWarning: 
+    A value is trying to be set on a copy of a slice from a DataFrame.
+    Try using .loc[row_indexer,col_indexer] = value instead
+    
+    See the caveats in the documentation: http://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+      if __name__ == '__main__':
+    /opt/anaconda3/lib/python3.7/site-packages/ipykernel_launcher.py:12: SettingWithCopyWarning: 
+    A value is trying to be set on a copy of a slice from a DataFrame.
+    Try using .loc[row_indexer,col_indexer] = value instead
+    
+    See the caveats in the documentation: http://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+      if sys.path[0] == '':
+    /opt/anaconda3/lib/python3.7/site-packages/ipykernel_launcher.py:15: SettingWithCopyWarning: 
+    A value is trying to be set on a copy of a slice from a DataFrame.
+    Try using .loc[row_indexer,col_indexer] = value instead
+    
+    See the caveats in the documentation: http://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+      from ipykernel import kernelapp as app
+    /opt/anaconda3/lib/python3.7/site-packages/ipykernel_launcher.py:27: SettingWithCopyWarning: 
+    A value is trying to be set on a copy of a slice from a DataFrame.
+    Try using .loc[row_indexer,col_indexer] = value instead
+    
+    See the caveats in the documentation: http://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+    /opt/anaconda3/lib/python3.7/site-packages/ipykernel_launcher.py:30: SettingWithCopyWarning: 
+    A value is trying to be set on a copy of a slice from a DataFrame.
+    Try using .loc[row_indexer,col_indexer] = value instead
+    
+    See the caveats in the documentation: http://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+    /opt/anaconda3/lib/python3.7/site-packages/ipykernel_launcher.py:33: SettingWithCopyWarning: 
+    A value is trying to be set on a copy of a slice from a DataFrame.
+    Try using .loc[row_indexer,col_indexer] = value instead
+    
+    See the caveats in the documentation: http://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
 
-gsearch2.fit(X_train,Y_train)
-results2 = gsearch2.cv_results_
-best_estimator = gsearch2.best_estimator_
 
-#调整subsample和colsample_bytree参数
-#取0.6，0.7，0.8，0.9作为起始值
-param_test3 ={
-    'subsample':[i/10.0 for i in range(6,10)],
-    'colsample_bytree':[i/10.0 for i in range(6,10)]
-}
 
-gsearch3 = GridSearchCV(
-    estimator = best_estimator,
-    param_grid = param_test3,
-    scoring = 'roc_auc',
-    n_jobs = 4,
-    iid = False,
-    cv=5,
-    return_train_score=True
-)
+```python
+seed = 1075
+np.random.seed(seed)
+# Create classifiers
+xgb = XGBClassifier()
+dt = DecisionTreeClassifier()
+svc =  SVC()
+kn = KNeighborsClassifier()
+gb = GradientBoostingClassifier()
+ridge = RidgeClassifier()
+sgd = SGDClassifier()
+lr = LogisticRegression()
+        
+clf_array = [xgb, dt, svc, kn, gb, ridge, sgd]
+names = ['XGB Classifier', 'DecisionTree Classifier', 'SVC', 'KNeighbors Classifier','GradientBoosting Classifier','Ridge Classifier','SGD Classifier']
 
-gsearch3.fit(X_train,Y_train)
-results3 = gsearch3.cv_results_
-best_estimator = gsearch3.best_estimator_
+for clf in clf_array:
+    vanilla_scores = cross_val_score(clf, X_train, y_train, cv=10, n_jobs=-1)
+    bagging_clf = BaggingClassifier(clf,max_samples=0.4, max_features=10, random_state=seed)
+    bagging_scores = cross_val_score(bagging_clf, X_train, y_train, cv=10, n_jobs=-1)
+    print("Mean of: {1:.3f}, std: (+/-) {2:.3f} ,[{0}]".format(clf.__class__.__name__, 
+                                                              vanilla_scores.mean(), vanilla_scores.std()))
+    print("Mean of: {1:.3f}, std: (+/-) {2:.3f} ,[Bagging {0}]\n".format(clf.__class__.__name__, 
+                                                                        bagging_scores.mean(), bagging_scores.std()))
+```
 
-#调整正则化参数
-param_test4 = {
-    'reg_alpha':[1e-5,1e-2,0.1,1,100]
-}
-gsearch4 = GridSearchCV(
-    estimator = best_estimator,
-    param_grid = param_test4,
-    scoring = 'roc_auc',
-    n_jobs = 4,
-    iid = False,
-    cv=5,
-    return_train_score=True
-)
+    Mean of: 0.872, std: (+/-) 0.012 ,[XGBClassifier]
+    Mean of: 0.847, std: (+/-) 0.008 ,[Bagging XGBClassifier]
+    
+    Mean of: 0.762, std: (+/-) 0.040 ,[DecisionTreeClassifier]
+    Mean of: 0.846, std: (+/-) 0.010 ,[Bagging DecisionTreeClassifier]
+    
+    Mean of: 0.840, std: (+/-) 0.002 ,[SVC]
+    Mean of: 0.840, std: (+/-) 0.002 ,[Bagging SVC]
+    
+    Mean of: 0.818, std: (+/-) 0.019 ,[KNeighborsClassifier]
+    Mean of: 0.840, std: (+/-) 0.002 ,[Bagging KNeighborsClassifier]
+    
+    Mean of: 0.867, std: (+/-) 0.018 ,[GradientBoostingClassifier]
+    Mean of: 0.849, std: (+/-) 0.010 ,[Bagging GradientBoostingClassifier]
+    
+    Mean of: 0.861, std: (+/-) 0.013 ,[RidgeClassifier]
+    Mean of: 0.840, std: (+/-) 0.002 ,[Bagging RidgeClassifier]
+    
+    Mean of: 0.780, std: (+/-) 0.166 ,[SGDClassifier]
+    Mean of: 0.840, std: (+/-) 0.002 ,[Bagging SGDClassifier]
+    
 
-gsearch4.fit(X_train,Y_train)
-results4 = gsearch4.cv_results_
-gsearch4.best_estimator_,gsearch4.best_params_,gsearch4.best_score_
 
-y_predict = gsearch4.predict(X_test)
 
-y_predict
+```python
+# Set up voting
+eclf = VotingClassifier(estimators=[('XGB Classifier', xgb), 
+                                    ('DecisionTree Classifier', dt), 
+                                    ('SVC', svc), 
+                                    ('KNeighbors Classifier', kn),
+                                    ('GradientBoosting Classifier',gb),
+                                    ('Ridge Classifier',ridge),
+                                    ('SGD Classifier',sgd)
+                                   ], voting='hard')
 
+for clf, label in zip([xgb, dt, svc, kn, gb, ridge, sgd, eclf], ['XGB Classifier', 
+                                                                 'DecisionTree Classifier', 
+                                                                 'SVC', 
+                                                                 'KNeighbors Classifier',
+                                                                 'GradientBoosting Classifier',
+                                                                 'Ridge Classifier',
+                                                                 'SGD Classifier',
+                                                                 'Ensemble']):
+    scores = cross_val_score(clf, X_train, y_train, cv=10, scoring='accuracy')
+    print("Mean: {0:.3f}, std: (+/-) {1:.3f} [{2}]".format(scores.mean(), scores.std(), label))
+```
+
+    Mean: 0.872, std: (+/-) 0.012 [XGB Classifier]
+    Mean: 0.776, std: (+/-) 0.038 [DecisionTree Classifier]
+
+
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+
+
+    Mean: 0.840, std: (+/-) 0.002 [SVC]
+    Mean: 0.818, std: (+/-) 0.019 [KNeighbors Classifier]
+    Mean: 0.867, std: (+/-) 0.018 [GradientBoosting Classifier]
+    Mean: 0.861, std: (+/-) 0.013 [Ridge Classifier]
+    Mean: 0.838, std: (+/-) 0.008 [SGD Classifier]
+
+
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+    /opt/anaconda3/lib/python3.7/site-packages/sklearn/svm/base.py:193: FutureWarning: The default value of gamma will change from 'auto' to 'scale' in version 0.22 to account better for unscaled features. Set gamma explicitly to 'auto' or 'scale' to avoid this warning.
+      "avoid this warning.", FutureWarning)
+
+
+    Mean: 0.855, std: (+/-) 0.014 [Ensemble]
+
+
+
+```python
+from mlxtend.classifier import EnsembleVoteClassifier
+# Create boosting classifiers
+ada_boost = AdaBoostClassifier()
+grad_boost = GradientBoostingClassifier()
+xgb_boost = XGBClassifier()
+
+boost_array = [ada_boost, grad_boost, xgb_boost]
+
+eclf = EnsembleVoteClassifier(clfs=[ada_boost, grad_boost, xgb_boost], voting='hard')
+
+labels = ['Ada Boost', 'Grad Boost', 'XG Boost', 'Ensemble']
+
+for clf, label in zip([ada_boost, grad_boost, xgb_boost, eclf], labels):
+    scores = cross_val_score(clf, X_train, y_train, cv=10, scoring='accuracy')
+    print("Mean: {0:.3f}, std: (+/-) {1:.3f} [{2}]".format(scores.mean(), scores.std(), label))
+```
+
+    Mean: 0.874, std: (+/-) 0.026 [Ada Boost]
+    Mean: 0.869, std: (+/-) 0.017 [Grad Boost]
+    Mean: 0.872, std: (+/-) 0.012 [XG Boost]
+    Mean: 0.874, std: (+/-) 0.011 [Ensemble]
+
+
+
+```python
+eclf.fit(X_train,y_train)
+y_predict = eclf.predict_proba(X_test)
+```
+
+
+```python
+y1_predict = y_predict[:,1]
+```
+
+
+```python
 test_id = test['user_id']
+submission = pd.DataFrame({"user_id":test_id, "Attrition": y1_predict})
+submission.to_csv('submissionV2.csv',index=False)
+```
 
-submission = pd.DataFrame({"user_id":test_id, "Attrition": y_predict})
-submission.to_csv('submission.csv',index=False)
+
+```python
+
+```
+
+
