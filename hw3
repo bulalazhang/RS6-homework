@@ -20,3 +20,36 @@
 - 特征之间是否有线性关系可以通过散点图的形式查看。
 - 单个特征是否符合一定概率分布可以通过直方图的形式查看。
 - 分类特征重要性的比较，可以通过条形图、饼图。
+
+、、、
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+pd.options.display.max_columns=100
+
+df = pd.read_csv('Market_Basket_Optimisation.csv',header=None)
+
+df.head()
+
+### efficient_apriori
+
+transactions = []
+for i in range(len(df)):
+    data = df.ix[i]
+    temp_set = set()
+    newlist = [x for x in data if x is not np.nan]
+    for item in newlist:
+        temp_set.add(item)
+    transactions.append(temp_set)
+
+#transactions
+
+from efficient_apriori import apriori
+
+itemsets,rules = apriori(transactions, min_support=0.08, min_confidence=0.5)
+
+print("频繁项集：",itemsets) 
+
+print("关联规则：",rules)
+```
